@@ -1,9 +1,9 @@
 const {Firestore} = require('@google-cloud/firestore');
 
 const firestore = new Firestore();
-const writer = firestore._bulkWriter();
-const NUM_LOOPS = 50;
-const NUM_WRITES_PER_TEST = 300;
+const writer = firestore._bulkWriter({disableThrottling: true});
+const NUM_LOOPS = 10;
+const NUM_WRITES_PER_LOOP = 500;
 const BATCH_SIZES = [10, 20, 30, 40, 50, 100, 150, 200, 250, 500];
 
 async function quickstart() {
@@ -16,6 +16,7 @@ async function quickstart() {
 
   // Multiple overlapping fields
   data = generateMultiOverlappingField();
+  console.log('--------------------------------------------------------------');
   for (let batchSize of BATCH_SIZES) {
     writer._setMaxBatchSize(batchSize);
     await runOverlappingFieldsTest(batchSize, data, 'MULTIPLE OVERLAPPING FIELDS');
@@ -23,12 +24,14 @@ async function quickstart() {
 
   // Multiple random field
   data = generateSingleRandomField();
+  console.log('--------------------------------------------------------------');
   for (let batchSize of BATCH_SIZES) {
     writer._setMaxBatchSize(batchSize);
     await runUniqueFieldsTest(batchSize, data, 'SINGLE RANDOM FIELD');
   }
   // Multiple random field
   data = generateMultiRandomFields();
+  console.log('--------------------------------------------------------------');
   for (let batchSize of BATCH_SIZES) {
     writer._setMaxBatchSize(batchSize);
     await runUniqueFieldsTest(batchSize, data, 'MULTIPLE RANDOM FIELDS');
@@ -36,41 +39,40 @@ async function quickstart() {
 }
 
 async function runOverlappingFieldsTest(batchSize, data, name) {
-  console.log('--------------------' + name + '------------------------');
-  console.log('Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_TEST);
-  let total = 0;
-  for (let i = 0; i < NUM_LOOPS; i++) {
-    let startTime = Date.now();
-    for (let j = 0; j < NUM_WRITES_PER_TEST; j++) {
-      writer.set(firestore.collection('coll').doc(), data).catch(err => {
-        console.log('failed!', err);
-      });
-    }
-    await writer.flush();
-    let endTime = Date.now();
-    const timeElasped = (endTime - startTime);
-    total += timeElasped
-  }
-  console.log('average time for ' + NUM_WRITES_PER_TEST + ' writes ', total/NUM_LOOPS + 'ms');
+  return runTest(
+      batchSize,
+      data,
+      name,
+      () => writer.set(firestore.collection('coll').doc(), data)
+  );
 }
 
 async function runUniqueFieldsTest(batchSize, data, name) {
-  console.log('--------------------' + name + '------------------------');
-  console.log('Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_TEST);
+  return runTest(
+      batchSize,
+      data,
+      name,
+      (i) => writer.set(firestore.collection('coll').doc(), data[i])
+  );
+}
+
+async function runTest(batchSize, data, name, func) {
+  console.log('--------------------' + name);
+  console.log('Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_LOOP);
   let total = 0;
   for (let i = 0; i < NUM_LOOPS; i++) {
     let startTime = Date.now();
-    for (let j = 0; j < NUM_WRITES_PER_TEST; j++) {
-      writer.set(firestore.collection('coll').doc(), data[i]).catch(err => {
-        console.log('failed');
+    for (let j = 0; j < NUM_WRITES_PER_LOOP; j++) {
+      func(i).catch((err) => {
+        console.log('write: ' + j + ', failed with: ', err);
       });
     }
     await writer.flush();
     let endTime = Date.now();
-    const timeElasped = (endTime - startTime);
-    total += timeElasped
+    const timeElapsed = (endTime - startTime);
+    total += timeElapsed
   }
-  console.log('average time for ' + NUM_WRITES_PER_TEST + ' writes ', total/NUM_LOOPS + 'ms');
+  console.log('average time for ' + NUM_WRITES_PER_LOOP + ' writes ', total/NUM_LOOPS + 'ms');
 }
 
 function generateMultiOverlappingField() {

@@ -1,122 +1,111 @@
-const {Firestore, DocumentReference, GrpcStatus} = require('@google-cloud/firestore');
+const {Firestore} = require('@google-cloud/firestore');
 
 const firestore = new Firestore();
+const writer = firestore._bulkWriter();
+const NUM_LOOPS = 50;
+const NUM_WRITES_PER_TEST = 300;
+const BATCH_SIZES = [10, 20, 30, 40, 50, 100, 150, 200, 250, 500];
 
 async function quickstart() {
-  // Obtain a document reference.
-  const document = firestore.doc('posts/intro-to-firestore');
+  // Single overlapping field
+  let data = {foo: 'bar'};
+  for (let batchSize of BATCH_SIZES) {
+    writer._setMaxBatchSize(batchSize);
+    await runOverlappingFieldsTest(batchSize, data, 'SINGLE OVERLAPPING FIELD');
+  }
 
-  // Enter new data into the document.
-  await document.set({
-    title: 'Welcome to Firestore',
-    body: 'Hello World',
-  });
-  console.log('Entered new data into the document');
+  // Multiple overlapping fields
+  data = generateMultiOverlappingField();
+  for (let batchSize of BATCH_SIZES) {
+    writer._setMaxBatchSize(batchSize);
+    await runOverlappingFieldsTest(batchSize, data, 'MULTIPLE OVERLAPPING FIELDS');
+  }
 
-  // Update an existing document.
-  await document.update({
-    body: 'My first Firestore app',
-  }).catch((err) => {
-    switch(err.code) {
-      case GrpcStatus.ABORTED
-        return true;
-    };
-  });
-  console.log('Updated an existing document');
-
-  // Read the document.
-  let doc = await document.get();
-  console.log('Read the document');
-
-  // Delete the document.
-  await document.delete();
-  console.log('Deleted the document');
+  // Multiple random field
+  data = generateSingleRandomField();
+  for (let batchSize of BATCH_SIZES) {
+    writer._setMaxBatchSize(batchSize);
+    await runUniqueFieldsTest(batchSize, data, 'SINGLE RANDOM FIELD');
+  }
+  // Multiple random field
+  data = generateMultiRandomFields();
+  for (let batchSize of BATCH_SIZES) {
+    writer._setMaxBatchSize(batchSize);
+    await runUniqueFieldsTest(batchSize, data, 'MULTIPLE RANDOM FIELDS');
+  }
 }
+
+async function runOverlappingFieldsTest(batchSize, data, name) {
+  console.log('--------------------' + name + '------------------------');
+  console.log('Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_TEST);
+  let total = 0;
+  for (let i = 0; i < NUM_LOOPS; i++) {
+    let startTime = Date.now();
+    for (let j = 0; j < NUM_WRITES_PER_TEST; j++) {
+      writer.set(firestore.collection('coll').doc(), data).catch(err => {
+        console.log('failed!', err);
+      });
+    }
+    await writer.flush();
+    let endTime = Date.now();
+    const timeElasped = (endTime - startTime);
+    total += timeElasped
+  }
+  console.log('average time for ' + NUM_WRITES_PER_TEST + ' writes ', total/NUM_LOOPS + 'ms');
+}
+
+async function runUniqueFieldsTest(batchSize, data, name) {
+  console.log('--------------------' + name + '------------------------');
+  console.log('Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_TEST);
+  let total = 0;
+  for (let i = 0; i < NUM_LOOPS; i++) {
+    let startTime = Date.now();
+    for (let j = 0; j < NUM_WRITES_PER_TEST; j++) {
+      writer.set(firestore.collection('coll').doc(), data[i]).catch(err => {
+        console.log('failed');
+      });
+    }
+    await writer.flush();
+    let endTime = Date.now();
+    const timeElasped = (endTime - startTime);
+    total += timeElasped
+  }
+  console.log('average time for ' + NUM_WRITES_PER_TEST + ' writes ', total/NUM_LOOPS + 'ms');
+}
+
+function generateMultiOverlappingField() {
+  let out = {};
+  for (let i = 0; i < 50; i++) {
+    out["foo" + i] = "foo" + i;
+  }
+  return out;
+}
+
+function generateSingleRandomField() {
+  let out = [];
+  for (let j = 0; j < 50; j++) {
+    let obj = {};
+      obj[randStr()] = randStr();
+    out.push(obj);
+  }
+  return out;
+}
+
+function generateMultiRandomFields() {
+  let out = [];
+  for (let j = 0; j < 50; j++) {
+    let obj = {};
+    for (let i = 0; i < 50; i++) {
+      obj[randStr()] = randStr();
+    }
+    out.push(obj);
+  }
+  return out;
+}
+
+function randStr() {
+  return Math.random().toString(26).substring(2, 15) + Math.random().toString(
+      26).substring(2, 15);
+}
+
 quickstart();
-
-
-var config = {
-  apiKey: "AIzaSyAcq_4hUMM1efxxUne3DhlpxTo_o6YZ-pg",
-  databaseURL: "https://chenbrian-new1.firebaseio.com",
-  storageBucket: "chenbrian-new1.appspot.com",
-  authDomain: "chenbrian-new1.firebaseapp.com",
-  messagingSenderId: "555886180858",
-  projectId: "chenbrian-new1"
-};
-// const app = firebase.initializeApp(config, 'some-name');
-// await app.delete();
-// console.log('app deleted!');
-const app = firebase.initializeApp(config, "some-name");
-var db = firebase.firestore(app);
-db.settings({host: "http://localhost:8080", ssl: false});
-// firebase.firestore.setLogLevel("debug");
-
-async function main() {
-  console.log(app);
-  db.enablePersistence({ experimentalTabSynchronization: false });
-
-  const writer = db.bulkWriter();
-
-  writer.set()
-
-
-  console.log("persistence enabled");
-  var citiesRef = db.collection("cities");
-
-  citiesRef.doc("SF").set({
-    name: "San Francisco",
-    state: "CA",
-    country: "USA",
-    capital: false,
-    population: 860000,
-    regions: ["west_coast", "norcal"]
-  });
-  citiesRef.doc("BJ").set({
-    name: "Beijing",
-    state: null,
-    country: "China",
-    capital: true,
-    population: 21500000,
-    regions: ["jingjinji", "hebei"]
-  });
-  console.log("added stuff to db");
-
-  await db.collection("cities").where("name", "in", ["San Francisco"]).get().then(snapshot => {
-    snapshot.forEach(doc => {
-      console.log(doc.id, ' => ', doc.data());
-    });
-  });
-}
-
-async function shutdownAndCP() {
-  console.log("clearing stuff now");
-  await app.delete();
-  await db._clearPersistence();
-}
-
-async function dbInteract() {
-  var docRef = db.collection("cities").doc("SF");
-  docRef
-    .get({source:'cache'})
-    .then(function(doc) {
-      if (doc.exists) {
-        console.log("Document data:", doc.data());
-      } else {
-        // doc.data() will be undefined in this case
-        console.log("No such document!");
-      }
-    })
-    .catch(function(error) {
-      console.log("Error getting document:", error);
-    });
-}
-
-async function listen() {
-  var docRef = db.collection("cities").doc("SF");
-  docRef.onSnapshot({ includeMetadataChanges: true }, function(doc) {
-    console.log('data: ', doc.data());
-    console.log('doc', doc);
-  });
-}
-
-main();

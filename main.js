@@ -4,17 +4,18 @@ const firestore = new Firestore();
 const writer = firestore._bulkWriter({disableThrottling: true});
 const NUM_LOOPS = 10;
 const NUM_WRITES_PER_LOOP = 500;
-const BATCH_SIZES = [10, 20, 30, 40, 50, 100, 150, 200, 250, 500];
+const BATCH_SIZES = [10, 20, 30, 40, 50, 100, 150, 250, 500];
+const document = firestore.collection('foo').doc();
 
 async function quickstart() {
-  // Single overlapping field
+  // // Single overlapping field
   let data = {foo: 'bar'};
-  for (let batchSize of BATCH_SIZES) {
-    writer._setMaxBatchSize(batchSize);
-    await runOverlappingFieldsTest(batchSize, data, 'SINGLE OVERLAPPING FIELD');
-  }
-
-  // Multiple overlapping fields
+  // for (let batchSize of BATCH_SIZES) {
+  //   writer._setMaxBatchSize(batchSize);
+  //   await runOverlappingFieldsTest(batchSize, data, 'SINGLE OVERLAPPING FIELD');
+  // }
+  //
+  // // Multiple overlapping fields
   data = generateMultiOverlappingField();
   console.log('--------------------------------------------------------------');
   for (let batchSize of BATCH_SIZES) {
@@ -22,20 +23,21 @@ async function quickstart() {
     await runOverlappingFieldsTest(batchSize, data, 'MULTIPLE OVERLAPPING FIELDS');
   }
 
+  // Single random field
+  // data = generateSingleRandomField();
+  // console.log('--------------------------------------------------------------');
+  // for (let batchSize of BATCH_SIZES) {
+  //   writer._setMaxBatchSize(batchSize);
+  //   await runUniqueFieldsTest(batchSize, data, 'SINGLE RANDOM FIELD');
+  // }
+
   // Multiple random field
-  data = generateSingleRandomField();
-  console.log('--------------------------------------------------------------');
-  for (let batchSize of BATCH_SIZES) {
-    writer._setMaxBatchSize(batchSize);
-    await runUniqueFieldsTest(batchSize, data, 'SINGLE RANDOM FIELD');
-  }
-  // Multiple random field
-  data = generateMultiRandomFields();
-  console.log('--------------------------------------------------------------');
-  for (let batchSize of BATCH_SIZES) {
-    writer._setMaxBatchSize(batchSize);
-    await runUniqueFieldsTest(batchSize, data, 'MULTIPLE RANDOM FIELDS');
-  }
+  // data = generateMultiRandomFields();
+  // console.log('--------------------------------------------------------------');
+  // for (let batchSize of BATCH_SIZES) {
+  //   writer._setMaxBatchSize(batchSize);
+  //   await runUniqueFieldsTest(batchSize, data, 'MULTIPLE RANDOM FIELDS');
+  // }
 }
 
 async function runOverlappingFieldsTest(batchSize, data, name) {

@@ -1,106 +1,195 @@
 const {Firestore} = require('@google-cloud/firestore');
+const sleep = require('sleep');
 
 const firestore = new Firestore();
-const writer = firestore._bulkWriter({disableThrottling: true});
-const NUM_LOOPS = 10;
-const NUM_WRITES_PER_LOOP = 500;
-const BATCH_SIZES = [10, 20, 30, 40, 50, 100, 150, 200, 250, 500];
 
-async function quickstart() {
-  // Single overlapping field
-  let data = {foo: 'bar'};
-  for (let batchSize of BATCH_SIZES) {
-    writer._setMaxBatchSize(batchSize);
-    await runOverlappingFieldsTest(batchSize, data, 'SINGLE OVERLAPPING FIELD');
-  }
+// Global variables to configure tests.
+const NUM_LOOPS = 10; // Number of loops to run.
+const NUM_WRITES_PER_LOOP = 5000; // Number of document writes in each loop.
+const BATCH_SIZES = [10, 20, 30, 50, 100, 250];
+const NUM_ENTITIES = 50; // Number of entities in each document write.
+const RUN_WRITE_BATCH_TEST = false; // true: runs BulkWriter test
+const USE_RANDOM_FIELDS = false; // true: use overlapping fields
+const THROTTLING_SETTING = false;
 
-  // Multiple overlapping fields
-  data = generateMultiOverlappingField();
-  console.log('--------------------------------------------------------------');
-  for (let batchSize of BATCH_SIZES) {
-    writer._setMaxBatchSize(batchSize);
-    await runOverlappingFieldsTest(batchSize, data, 'MULTIPLE OVERLAPPING FIELDS');
-  }
+const writer = firestore.bulkWriter({throttling: THROTTLING_SETTING});
+writer.onWriteError((err) => {
+  console.log('write failed', err.message);
+  console.log('Num failed attempts: ', err.failedAttempts);
+  return true;
+});
 
-  // Multiple random field
-  data = generateSingleRandomField();
-  console.log('--------------------------------------------------------------');
-  for (let batchSize of BATCH_SIZES) {
-    writer._setMaxBatchSize(batchSize);
-    await runUniqueFieldsTest(batchSize, data, 'SINGLE RANDOM FIELD');
-  }
-  // Multiple random field
-  data = generateMultiRandomFields();
-  console.log('--------------------------------------------------------------');
-  for (let batchSize of BATCH_SIZES) {
-    writer._setMaxBatchSize(batchSize);
-    await runUniqueFieldsTest(batchSize, data, 'MULTIPLE RANDOM FIELDS');
+async function main() {
+  const [startingData, updateData] = USE_RANDOM_FIELDS ?
+      [generateMultiRandomFields(), generateMultiRandomFields()] :
+      [generateMultiOverlappingFields(), generateMultiOverlappingFields()];
+  if (RUN_WRITE_BATCH_TEST) {
+    for (const batchSize of BATCH_SIZES) {
+      writer._setMaxBatchSize(batchSize);
+      await runWriteBatchTest(batchSize, startingData, updateData);
+    }
+  } else {
+    for (const batchSize of BATCH_SIZES) {
+      writer._setMaxBatchSize(batchSize);
+      await runBulkWriterTest( batchSize, startingData, updateData);
+    }
   }
 }
 
-async function runOverlappingFieldsTest(batchSize, data, name) {
-  return runTest(
-      batchSize,
-      data,
-      name,
-      () => writer.set(firestore.collection('coll').doc(), data)
-  );
-}
+async function runBulkWriterTest(batchSize, startingData, updateData) {
+  console.log('--------- BulkWriter: Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_LOOP);
+  const docRefs = [];
+  let totalTimeElapsedMs = 0;
 
-async function runUniqueFieldsTest(batchSize, data, name) {
-  return runTest(
-      batchSize,
-      data,
-      name,
-      (i) => writer.set(firestore.collection('coll').doc(), data[i])
-  );
-}
-
-async function runTest(batchSize, data, name, func) {
-  console.log('--------------------' + name);
-  console.log('Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_LOOP);
-  let total = 0;
+  // Run set test
   for (let i = 0; i < NUM_LOOPS; i++) {
-    let startTime = Date.now();
+    await sleep.sleep(15);
+    const startTime = Date.now();
     for (let j = 0; j < NUM_WRITES_PER_LOOP; j++) {
-      func(i).catch((err) => {
-        console.log('write: ' + j + ', failed with: ', err);
+      const docRef = firestore.collection(randStr()).doc();
+      docRefs.push(docRef);
+      writer.set(docRef, startingData).catch((err) => {
+        console.log('set: ' + j + ', failed with: ', err);
       });
     }
     await writer.flush();
-    let endTime = Date.now();
+    const endTime = Date.now();
     const timeElapsed = (endTime - startTime);
-    total += timeElapsed
+    totalTimeElapsedMs += timeElapsed;
   }
-  console.log('average time for ' + NUM_WRITES_PER_LOOP + ' writes ', total/NUM_LOOPS + 'ms');
+  const qps = Math.round((NUM_LOOPS * NUM_WRITES_PER_LOOP) / totalTimeElapsedMs * 1000);
+  console.log('average set QPS:', qps);
+
+  // Run update test
+  let operationFn = (docRef, data) => {
+    writer.update(docRef, data).catch((err) => {
+      console.log('update failed with: ', err);
+    });
+  };
+  await runBulkWriterTestStep(batchSize, updateData, docRefs, operationFn);
+
+  // Run delete test
+  operationFn = (docRef) => {
+    writer.delete(docRef).catch((err) => {
+      console.log('delete failed with: ', err);
+    });
+  };
+  await runBulkWriterTestStep(batchSize, {}, docRefs, operationFn);
 }
 
-function generateMultiOverlappingField() {
-  let out = {};
-  for (let i = 0; i < 50; i++) {
-    out["foo" + i] = "foo" + i;
+async function runBulkWriterTestStep(batchSize, data, docRefs, operationFn) {
+  let totalTimeElapsedMs = 0;
+  let index = 0;
+  for (let i = 0; i < NUM_LOOPS; i++) {
+    await sleep.sleep(15);
+    const startTime = Date.now();
+    for (let j = 0; j < NUM_WRITES_PER_LOOP; j++) {
+      operationFn(docRefs[index], data);
+      index++;
+    }
+    await writer.flush();
+    const endTime = Date.now();
+    const timeElapsed = (endTime - startTime);
+    totalTimeElapsedMs += timeElapsed;
   }
-  return out;
+
+  const qps = Math.round((NUM_LOOPS * NUM_WRITES_PER_LOOP) / totalTimeElapsedMs * 1000);
+  console.log('average QPS:', qps);
 }
 
-function generateSingleRandomField() {
-  let out = [];
-  for (let j = 0; j < 50; j++) {
-    let obj = {};
-      obj[randStr()] = randStr();
-    out.push(obj);
+async function runWriteBatchTest(batchSize, startingData, updateData) {
+  console.log('--------- WriteBatch: Batch size: ' + batchSize + ', numWrites: ' + NUM_WRITES_PER_LOOP);
+  const docRefs = [];
+  let totalTimeElapsedMs = 0;
+
+  // Run set test
+  for (let i = 0; i < NUM_LOOPS; i++) {
+    await sleep.sleep(2);
+    const startTime = Date.now();
+    const commits = [];
+    for (let j = 0; j < NUM_WRITES_PER_LOOP / batchSize; j++) {
+      const batch = firestore.batch();
+      for (let k = 0; k < batchSize; k++) {
+        const docRef = firestore.collection(randStr()).doc();
+        docRefs.push(docRef);
+        batch.set(docRef, startingData);
+      }
+      commits.push(batch.commit().catch((e) => {
+        console.log('write batch error: ', e);
+      }));
+    }
+    await Promise.all(commits);
+    const endTime = Date.now();
+    const timeElapsed = (endTime - startTime);
+    totalTimeElapsedMs += timeElapsed;
+  }
+  let qps = Math.round((NUM_LOOPS * NUM_WRITES_PER_LOOP) / totalTimeElapsedMs * 1000);
+  console.log('average set QPS:', qps);
+
+  // Run update test
+  totalTimeElapsedMs = 0;
+  let index = 0;
+  for (let i = 0; i < NUM_LOOPS; i++) {
+    await sleep.sleep(2);
+    const startTime = Date.now();
+    const commits = [];
+    for (let j = 0; j < NUM_WRITES_PER_LOOP / batchSize; j++) {
+      const batch = firestore.batch();
+      for (let k = 0; k < batchSize; k++) {
+        batch.update(docRefs[index], updateData);
+        index++;
+      }
+      commits.push(batch.commit().catch((e) => {
+        console.log('write batch error: ', e);
+      }));
+    }
+    await Promise.all(commits);
+    const endTime = Date.now();
+    const timeElapsed = (endTime - startTime);
+    totalTimeElapsedMs += timeElapsed;
+  }
+  qps = Math.round((NUM_LOOPS * NUM_WRITES_PER_LOOP) / totalTimeElapsedMs * 1000);
+  console.log('average update QPS:', qps);
+
+  // Run delete test
+  totalTimeElapsedMs = 0;
+  index = 0;
+  for (let i = 0; i < NUM_LOOPS; i++) {
+    await sleep.sleep(2);
+    const startTime = Date.now();
+    const commits = [];
+    for (let j = 0; j < NUM_WRITES_PER_LOOP / batchSize; j++) {
+      const batch = firestore.batch();
+      for (let k = 0; k < batchSize; k++) {
+        batch.delete(docRefs[index]);
+        index++;
+      }
+      commits.push(batch.commit().catch((e) => {
+        console.log('write batch error: ', e);
+      }));
+    }
+    await Promise.all(commits);
+    const endTime = Date.now();
+    const timeElapsed = (endTime - startTime);
+    totalTimeElapsedMs += timeElapsed;
+  }
+  qps = Math.round((NUM_LOOPS * NUM_WRITES_PER_LOOP) / totalTimeElapsedMs * 1000);
+  console.log('average delete QPS:', qps);
+}
+
+function generateMultiOverlappingFields() {
+  const out = {};
+  const startingIndex = Math.floor(Math.random() * 100);
+  for (let i = startingIndex; i < startingIndex + NUM_ENTITIES; i++) {
+    out['foo' + i] = 'foo' + i;
   }
   return out;
 }
 
 function generateMultiRandomFields() {
-  let out = [];
-  for (let j = 0; j < 50; j++) {
-    let obj = {};
-    for (let i = 0; i < 50; i++) {
-      obj[randStr()] = randStr();
-    }
-    out.push(obj);
+  const out = {};
+  for (let j = 0; j < NUM_ENTITIES; j++) {
+    out[randStr()] = randStr();
   }
   return out;
 }
@@ -110,4 +199,4 @@ function randStr() {
       26).substring(2, 15);
 }
 
-quickstart();
+main().then(()=> console.log('completed'));

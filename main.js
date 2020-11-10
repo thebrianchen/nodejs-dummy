@@ -34,6 +34,7 @@ async function main() {
       await runBulkWriterTest( batchSize, startingData, updateData);
     }
   }
+
 }
 
 async function runBulkWriterTest(batchSize, startingData, updateData) {
